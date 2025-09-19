@@ -3,10 +3,12 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-import numba
+import numba as nb
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 
 class TickerManager:
@@ -108,6 +110,79 @@ def generate_random_weights(
     return np.column_stack(weight_vector_list)
 
 
+@nb.njit
+def portfolio_stats(W, ret, cov_mat, risk_free_rate=0.0):
+    n, m = W.shape
+    expected_returns = np.empty(n, dtype=np.float64)
+    volatilities = np.empty(n, dtype=np.float64)
+    sharpe_ratios = np.empty(n, dtype=np.float64)
+
+    for i in range(n):
+        # portfolio return
+        port_ret = 0.0
+        for j in range(m):
+            port_ret += W[i, j] * ret[j]
+        expected_returns[i] = port_ret
+
+        port_var = 0.0
+        for j in range(m):
+            for k in range(m):
+                port_var += W[i, j] * cov_mat[j, k] * W[i, k]
+
+        port_vol = np.sqrt(port_var)
+        volatilities[i] = port_vol
+
+        if port_vol > 0.0:
+            sharpe_ratios[i] = (port_ret - risk_free_rate) / port_vol
+        else:
+            sharpe_ratios[i] = -np.inf
+
+    return expected_returns, volatilities, sharpe_ratios
+
+
+def plot_portfolios(
+    weights,
+    portfolio_returns,
+    portfolio_volatilities,
+    sharpe_ratios,
+    output_path: Path = Path(f"./data/{datetime.now()}_portfolio_output.png"),
+):
+    results = pd.DataFrame(
+        {
+            "expected_return": portfolio_returns,
+            "volatility": portfolio_volatilities,
+            "sharpe_ratio": sharpe_ratios,
+        }
+    )
+
+    best_idx = results["sharpe_ratio"].idxmax()
+    best = results.loc[best_idx]
+
+    # Plot
+    plt.figure(figsize=(12, 8))
+    sns.scatterplot(
+        data=results,
+        x="volatility",
+        y="expected_return",
+        hue="sharpe_ratio",
+        palette="viridis",
+        alpha=0.7,
+        s=20,
+    )
+    plt.scatter(
+        best["volatility"],
+        best["expected_return"],
+        color="red",
+        s=200,
+        label=f'Best Sharpe: {best["sharpe_ratio"]:.3f}',
+    )
+    plt.xlabel("Volatility"), plt.ylabel("Expected Return"), plt.legend()
+
+    plt.savefig(output_path)
+
+    return results, best
+
+
 # S&P 500 (^GSPC) : free weights
 # Gold Dec 25 (GC=F) : free weights
 # Emerging markets iShares MSCI EM UCITS ETF USD (Acc) (IEMA.L) : free weights
@@ -115,6 +190,9 @@ def generate_random_weights(
 # iShares U.S. Oil & Gas Exploration & Production ETF (IEO)
 # iShares Silver Trust (SLV)
 # Global X DAX Germany ETF (DAX)
+# iShares Bitcoin Trust ETF (IBIT)
+# Vanguard FTSE Europe ETF (VGK)
+# Vanguard Short-Term Bond Index Fund ETF Shares (BSV)
 
 
 FILE_PATH = Path("./data/portfolio.xlsx")
@@ -126,7 +204,10 @@ PORTFOLIO_COMPOSITION = {
     "LCCN.L": 0.0,
     "IEO": 0.0,
     "SLV": 0.0,
-    "DAX": 0.0
+    "DAX": 0.0,
+    "IBIT": 0.0,
+    "VGK": 0.0,
+    "BSV": 0.0,
 }
 
 RISK_FREE_RATE = 4.25
@@ -135,8 +216,16 @@ RISK_FREE_RATE = 4.25
 def main():
     ticker_manager = TickerManager(FILE_PATH, PORTFOLIO_COMPOSITION)
     returns_df = ticker_manager.get_returns_df()
-    print(returns_df.head())
-    print(generate_random_weights(PORTFOLIO_COMPOSITION))
+    returns_df = returns_df.dropna().pct_change()
+    weights = generate_random_weights(PORTFOLIO_COMPOSITION)
+    returns_array = np.asarray(returns_df.mean())
+    covariance_matrix_array = np.asarray(returns_df.cov())
+
+    expected_returns, volatilities, sharpe_ratios = portfolio_stats(
+        weights, returns_array, covariance_matrix_array, RISK_FREE_RATE
+    )
+
+    plot_portfolios(weights, expected_returns, volatilities, sharpe_ratios)
 
 
 if __name__ == "__main__":
