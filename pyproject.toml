@@ -1,0 +1,12 @@
+[project]
+name = "finance"
+version = "0.1.0"
+description = "Put into practice finance courses taken at emlyon"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numba>=0.62.0",
+    "numpy>=2.3.3",
+    "seaborn>=0.13.2",
+    "yfinance>=0.2.66",
+]
