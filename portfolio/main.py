@@ -111,18 +111,26 @@ def generate_random_weights(
 # S&P 500 (^GSPC) : free weights
 # Gold Dec 25 (GC=F) : free weights
 # Emerging markets iShares MSCI EM UCITS ETF USD (Acc) (IEMA.L) : free weights
-# iShares Physical Gold ETC (IGLN.L)
+# Amundi MSCI China UCITS ETF Acc (LCCN.L) : free weights
+# iShares U.S. Oil & Gas Exploration & Production ETF (IEO)
+# iShares Silver Trust (SLV)
+# Global X DAX Germany ETF (DAX)
 
-FILE_PATH = Path("./portfolio.xlsx")
+
+FILE_PATH = Path("./data/portfolio.xlsx")
 
 PORTFOLIO_COMPOSITION = {
-    "^GSPC":0.0,
-    "GC=F":0.0,
-    "IEMA.L":0.0,
-    
+    "^GSPC": 0.0,
+    "GC=F": 0.0,
+    "IEMA.L": 0.0,
+    "LCCN.L": 0.0,
+    "IEO": 0.0,
+    "SLV": 0.0,
+    "DAX": 0.0
 }
 
 RISK_FREE_RATE = 4.25
+
 
 def main():
     ticker_manager = TickerManager(FILE_PATH, PORTFOLIO_COMPOSITION)
