@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
+import click
 
 
 class TickerManager:
@@ -23,6 +24,14 @@ class TickerManager:
         try:
             self.cached_df = pd.read_excel(self.cached_returns_file_path).set_index(
                 "Date"
+            )
+            valid_tickers = set(portfolio_composition_dict.keys())
+            self.cached_df = self.cached_df.drop(
+                columns=[
+                    ticker
+                    for ticker in self.cached_df.columns
+                    if ticker not in valid_tickers
+                ]
             )
         except Exception as e:
             print(f"Error: {e}; Downloading all values")
@@ -75,7 +84,7 @@ def get_constrained_indices(portfolio_constraints: List[float]) -> List[int]:
 
 def generate_random_weights(
     portfolio_composition: Dict[str, float], n_rand_portfolios: int = 50000
-):
+) -> np.ndarray:
     """Generates random weights taking into account constraints"""
     portfolio_constraints = portfolio_composition.values()
 
@@ -112,6 +121,7 @@ def generate_random_weights(
 
 @nb.njit
 def portfolio_stats(W, ret, cov_mat, risk_free_rate=0.0):
+    """calculate portfolio info for each weight"""
     n, m = W.shape
     expected_returns = np.empty(n, dtype=np.float64)
     volatilities = np.empty(n, dtype=np.float64)
@@ -147,10 +157,11 @@ def plot_portfolios(
     sharpe_ratios,
     output_path: Path = Path(f"./data/{datetime.now()}_portfolio_output.png"),
 ):
+    """Plot the resulting portfolios with best sharp ratio"""
     results = pd.DataFrame(
         {
-            "expected_return": portfolio_returns,
-            "volatility": portfolio_volatilities,
+            "expected_return": portfolio_returns * 100,
+            "volatility": portfolio_volatilities * 100,
             "sharpe_ratio": sharpe_ratios,
         }
     )
@@ -158,7 +169,9 @@ def plot_portfolios(
     best_idx = results["sharpe_ratio"].idxmax()
     best = results.loc[best_idx]
 
-    # Plot
+    best_portfolio_ticker_weights = {
+        key: val for key, val in zip(PORTFOLIO_COMPOSITION.keys(), weights[best_idx])
+    }
     plt.figure(figsize=(12, 8))
     sns.scatterplot(
         data=results,
@@ -176,53 +189,108 @@ def plot_portfolios(
         s=200,
         label=f'Best Sharpe: {best["sharpe_ratio"]:.3f}',
     )
-    plt.xlabel("Volatility"), plt.ylabel("Expected Return"), plt.legend()
+    weights_text = "Optimal Weights:\n" + "\n".join(
+        [
+            f"• {ticker}: {weight:.2%}"
+            for ticker, weight in best_portfolio_ticker_weights.items()
+        ]
+    )
+    plt.title("Monte Carlo Portfolio Optimization", fontsize=16)
+    plt.text(
+        0.02,
+        0.98,
+        weights_text,
+        transform=plt.gca().transAxes,
+        fontsize=10,
+        verticalalignment="top",
+        bbox=dict(
+            boxstyle="round,pad=0.5", fc="white", alpha=0.6
+        ),  # Add a semi-transparent box
+    )
+    plt.xlabel("Volatility in percentage %"), plt.ylabel(
+        "Expected Return in percentage %"
+    ), plt.legend()
 
     plt.savefig(output_path)
 
-    return results, best
+    return best, best_idx
 
 
 # S&P 500 (^GSPC) : free weights
 # Gold Dec 25 (GC=F) : free weights
-# Emerging markets iShares MSCI EM UCITS ETF USD (Acc) (IEMA.L) : free weights
+# Emerging markets iShares MSCI EM UCITS ETF USD (Acc) (IEMA.L) : free weights = > Removed: high correlation to US and India
 # Amundi MSCI China UCITS ETF Acc (LCCN.L) : free weights
 # iShares U.S. Oil & Gas Exploration & Production ETF (IEO)
-# iShares Silver Trust (SLV)
+# iShares Silver Trust (SLV) => pretty high correlation to gold
 # Global X DAX Germany ETF (DAX)
 # iShares Bitcoin Trust ETF (IBIT)
-# Vanguard FTSE Europe ETF (VGK)
+# Vanguard FTSE Europe ETF (VGK) : Stopped : Too hight
 # Vanguard Short-Term Bond Index Fund ETF Shares (BSV)
+# iShares MSCI World ETF (URTH) => Removed: 0.97 corrolation to SNP
+# Global X Copper Miners ETF (COPX)
+# iShares MSCI United Kingdom ETF (EWU) => Removed: 0.76 corrolation to SNP, High average correlation
+# iShares MSCI India ETF (INDA)
+# iShares 20+ Year Treasury Bond ETF (TLT)
 
 
-FILE_PATH = Path("./data/portfolio.xlsx")
+RAW_DATA_FILE_PATH = Path("./data/portfolio_raw_data.xlsx")
+PROCESSED_DATA_FILE_PATH = Path("./data/portfolio_processing.xlsx")
 
 PORTFOLIO_COMPOSITION = {
     "^GSPC": 0.0,
     "GC=F": 0.0,
-    "IEMA.L": 0.0,
-    "LCCN.L": 0.0,
     "IEO": 0.0,
-    "SLV": 0.0,
     "DAX": 0.0,
-    "IBIT": 0.0,
-    "VGK": 0.0,
-    "BSV": 0.0,
+    "BTC-USD": 0.0,
+    "COPX": 0.0,
+    "INDA": 0.0,
+    "TLT": 0.0,
 }
 
-RISK_FREE_RATE = 4.25
 
+@click.command()
+@click.option("--risk_free_rate", default=0.0425, type=float)
+@click.option("--n_rand_portfolios", default=200000, type=int)
+@click.option("--max_volatility", default=np.inf, type=float)
+def main(risk_free_rate, n_rand_portfolios, max_volatility):
+    """Main entrypoint for script"""
+    writer = pd.ExcelWriter(PROCESSED_DATA_FILE_PATH, engine="xlsxwriter")
+    ticker_manager = TickerManager(RAW_DATA_FILE_PATH, PORTFOLIO_COMPOSITION)
 
-def main():
-    ticker_manager = TickerManager(FILE_PATH, PORTFOLIO_COMPOSITION)
-    returns_df = ticker_manager.get_returns_df()
-    returns_df = returns_df.dropna().pct_change()
-    weights = generate_random_weights(PORTFOLIO_COMPOSITION)
-    returns_array = np.asarray(returns_df.mean())
-    covariance_matrix_array = np.asarray(returns_df.cov())
+    weekly_returns_df = ticker_manager.get_returns_df()
+    weekly_returns_df.to_excel(writer, sheet_name="full_data")
+
+    weekly_returns_df = weekly_returns_df.dropna()
+    weekly_returns_df.to_excel(writer, sheet_name="data_no_na")
+
+    weekly_returns_percent_df = weekly_returns_df.pct_change().dropna()
+    weekly_returns_percent_df.to_excel(writer, sheet_name="percent_returns")
+
+    covariance_matrix_array = np.asarray(weekly_returns_percent_df.cov() * 52)
+    weekly_returns_percent_df.corr().to_excel(writer, sheet_name="correlation_matrix")
+
+    writer.close()
+
+    weights = generate_random_weights(PORTFOLIO_COMPOSITION, n_rand_portfolios)
+
+    yearly_average_returns_array = np.asarray(
+        ((1 + weekly_returns_percent_df.mean()) ** 52 - 1)
+    )
 
     expected_returns, volatilities, sharpe_ratios = portfolio_stats(
-        weights, returns_array, covariance_matrix_array, RISK_FREE_RATE
+        weights, yearly_average_returns_array, covariance_matrix_array, risk_free_rate
+    )
+
+    assert (
+        volatilities.min() < max_volatility
+    ), f"Min calculated volatility ({volatilities.min()*100:.2F}%) is over the defined allowed Max vol.({max_volatility*100:.2F}%)"
+
+    mask = volatilities < max_volatility
+    expected_returns, volatilities, sharpe_ratios, weights = (
+        expected_returns[mask],
+        volatilities[mask],
+        sharpe_ratios[mask],
+        weights[mask],
     )
 
     plot_portfolios(weights, expected_returns, volatilities, sharpe_ratios)
